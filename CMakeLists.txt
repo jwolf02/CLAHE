@@ -8,7 +8,9 @@ option(CUDA_SHARED_MEMORY "host and device shared a unified main memory" OFF)
 
 find_package(OpenCV REQUIRED)
 
-set(SOURCES             src/main.cu)
+set(SOURCES             src/main.cu
+                        src/common.hpp
+                        src/cuda_helpers.cuh)
 
 add_executable(CLAHE ${SOURCES})
 target_link_libraries(CLAHE PUBLIC ${OpenCV_LIBS})
