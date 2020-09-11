@@ -44,6 +44,7 @@
 
 #include <opencv2/cudev.hpp>
 #include "clahe.cuh"
+#include "cuda_helpers.cuh"
 #include <opencv2/cudaarithm.hpp>
 
 using namespace cv::cudev;
@@ -57,7 +58,7 @@ namespace clahe
 
 namespace
 {
-    class CLAHE_Impl : public CLAHE
+    class CLAHE_Impl : public CLAHE2D
     {
     public:
         CLAHE_Impl(double clipLimit = 40.0, int tilesX = 8, int tilesY = 8);
@@ -108,6 +109,8 @@ namespace
 
         ensureSizeIsEnough(tilesX_ * tilesY_, histSize, type, lut_);
 
+        cudaBin
+
         cudaStream_t stream = StreamAccessor::getStream(s);
 
         cv::Size tileSize;
@@ -140,6 +143,7 @@ namespace
             clipLimit = std::max(clipLimit, 1);
         }
 
+        TIMERSTART(calcLUT);
         if (type == CV_8UC1)
             clahe::calcLut_8U(srcForLut, lut_, tilesX_, tilesY_, make_int2(tileSize.width, tileSize.height), clipLimit, lutScale, stream);
         else // type == CV_16UC1
@@ -147,11 +151,14 @@ namespace
             ensureSizeIsEnough(tilesX_ * tilesY_, histSize, CV_32SC1, hist_);
             clahe::calcLut_16U(srcForLut, lut_, tilesX_, tilesY_, make_int2(tileSize.width, tileSize.height), clipLimit, lutScale, hist_, stream);
         }
+        TIMERSTOP(calcLUT);
 
+        TIMERSTART(transform);
         if (type == CV_8UC1)
             clahe::transform<uchar>(src, dst, lut_, tilesX_, tilesY_, make_int2(tileSize.width, tileSize.height), stream);
         else // type == CV_16UC1
             clahe::transform<ushort>(src, dst, lut_, tilesX_, tilesY_, make_int2(tileSize.width, tileSize.height), stream);
+        TIMERSTOP(transform);
     }
 
     void CLAHE_Impl::setClipLimit(double clipLimit)
@@ -182,7 +189,7 @@ namespace
     }
 }
 
-cv::Ptr<CLAHE> createCLAHE(double clipLimit, cv::Size tileGridSize)
+cv::Ptr<CLAHE2D> createCLAHE2D(double clipLimit, cv::Size tileGridSize)
 {
     return cv::makePtr<CLAHE_Impl>(clipLimit, tileGridSize.width, tileGridSize.height);
 }

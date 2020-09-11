@@ -56,7 +56,7 @@ static std::vector<cv::Mat> claheCudaOpencv(const std::vector<cv::Mat> &in, doub
 
 static std::vector<cv::Mat> claheCuda(const std::vector<cv::Mat> &in, double clipLimit, const cv::Size &gridSize) {
     std::vector<cv::Mat> out(in.size());
-    auto clahe = ::createCLAHE(clipLimit, gridSize);
+    auto clahe = ::createCLAHE2D(clipLimit, gridSize);
     for (int i = 0; i < in.size(); ++i) {
         cv::cuda::GpuMat tmp_in(in[i]), tmp_out;
         clahe->apply(tmp_in, tmp_out);
@@ -66,7 +66,9 @@ static std::vector<cv::Mat> claheCuda(const std::vector<cv::Mat> &in, double cli
 }
 
 static void warmupGPU(const cv::Mat &frame) {
-    std::vector<cv::Mat> data = { frame, frame, frame, frame };
+    cv::Mat tmp;
+    cv::resize(frame, tmp, cv::Size(1024, 1024));
+    std::vector<cv::Mat> data = { tmp, tmp, tmp, tmp };
     claheCudaOpencv(data, 40, cv::Size(8, 8));
 }
 
@@ -117,6 +119,7 @@ int main(int argc, const char *argv[]) {
     cv::Size gridSize = cv::Size(DEFAULT_GRID_SIZE, DEFAULT_GRID_SIZE);
     bool grid = false;
     bool showOutput = false;
+    double scale = 1.0;
 
     for (int i = 1; i < args.size() - 1; ++i) {
         if (string::starts_with(args[i], "--clip-limit=")) {
@@ -135,6 +138,11 @@ int main(int argc, const char *argv[]) {
             if (tokens.size() == 2) {
                 numFrames = string::to<unsigned>(tokens[1]);
             }
+        } else if (string::starts_with(args[i], "--scale=")) {
+            auto tokens = string::split(args[i], "=");
+            if (tokens.size() == 2) {
+                scale = string::to<double>(tokens[1]);
+            }
         } else if (args[i] == "--grid") {
             grid = true;
         } else if (args[i] == "--show-output") {
@@ -145,6 +153,7 @@ int main(int argc, const char *argv[]) {
     }
 
     std::cout << "numFrames=" << numFrames << std::endl;
+    std::cout << "scale=" << scale << std::endl;
     std::cout << "clipLimit=" << clipLimit << std::endl;
     std::cout << "gridSize=" << gridSize << std::endl;
     std::cout << "grid=" << std::boolalpha << grid << std::endl;
@@ -155,6 +164,11 @@ int main(int argc, const char *argv[]) {
         std::cout << "failed to read source" << std::endl;
         return EXIT_FAILURE;
     }
+
+    if (scale != 1.0) {
+        cv::resize(frame, frame, cv::Size(), scale, scale, cv::INTER_LINEAR);
+    }
+
     std::cout << "imageSize=[" << frame.rows << " x " << frame.cols << ']' << std::endl;
 
     std::vector<cv::Mat> data(numFrames);
@@ -183,11 +197,6 @@ int main(int argc, const char *argv[]) {
     TIMERSTART(claheCuda);
     m[4] = claheCuda(data, clipLimit, gridSize)[0];
     TIMERSTOP(claheCuda);
-
-    std::cout << std::endl;
-    std::cout << "MSE (claheNative/claheCudaOpenCV): " << mse(m[2], m[3]) << std::endl;
-    std::cout << "MSE (claheNative/claheCuda)      : " << mse(m[2], m[4]) << std::endl;
-    std::cout << "MSE (claheCudaOpenCV/claheCuda)  : " << mse(m[3], m[4]) << std::endl;
 
     if (showOutput) {
         cv::namedWindow("output", cv::WINDOW_KEEPRATIO);
