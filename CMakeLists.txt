@@ -10,7 +10,9 @@ find_package(OpenCV REQUIRED)
 
 set(SOURCES             src/main.cu
                         src/common.hpp
-                        src/cuda_helpers.cuh)
+                        src/cuda_helpers.cuh
+                        src/clahe.cu
+                        src/clahe.cuh)
 
 add_executable(CLAHE ${SOURCES})
 target_link_libraries(CLAHE PUBLIC ${OpenCV_LIBS})
