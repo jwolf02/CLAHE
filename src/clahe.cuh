@@ -49,7 +49,7 @@ public:
 @param tileGridSize Size of grid for histogram equalization. Input image will be divided into
 equally sized rectangular tiles. tileGridSize defines the number of tiles in row and column.
  */
-cv::Ptr<CLAHE2D> createCLAHE2D(double clipLimit = 40.0, cv::Size tileGridSize = cv::Size(8, 8));
+cv::Ptr<CLAHE2D> createCLAHE2D(double clipLimit = 40.0, const cv::Size &tileGridSize = cv::Size(8, 8));
 
 
 class CLAHE3D {
@@ -57,7 +57,7 @@ public:
 
     CLAHE3D();
 
-    void apply(cv::InputArrayOfArrays src, cv::OutputArrayOfArrays dst, cv::cuda::Stream &stream) {
+    void apply(const std::vector<cv::Mat> &src, std::vector<cv::Mat> &dst, cv::cuda::Stream &stream) {
 
     }
 
