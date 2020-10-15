@@ -51,26 +51,4 @@ equally sized rectangular tiles. tileGridSize defines the number of tiles in row
  */
 cv::Ptr<CLAHE2D> createCLAHE2D(double clipLimit = 40.0, const cv::Size &tileGridSize = cv::Size(8, 8));
 
-
-class CLAHE3D {
-public:
-
-    CLAHE3D();
-
-    void apply(const std::vector<cv::Mat> &src, std::vector<cv::Mat> &dst, cv::cuda::Stream &stream) {
-
-    }
-
-protected:
-
-
-
-    cv::Volume _gridSize;
-
-    double _clipLimit;
-
-};
-
-cv::Ptr<CLAHE3D> createCLAHE3D(double clipLimit = 40.0, const cv::Volume &gridSize=cv::Volume(8, 8, 8));
-
 #endif // __CLAHE_CUH

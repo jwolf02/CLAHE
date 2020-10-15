@@ -134,7 +134,7 @@ namespace
 
         const int type = src.type();
 
-        CV_Assert( type == CV_8UC1 || type == CV_16UC1 );
+        CV_Assert(type == CV_8UC1);
 
         _dst.create( src.size(), type );
         GpuMat dst = _dst.getGpuMat();
@@ -146,8 +146,10 @@ namespace
         cudaStream_t stream = StreamAccessor::getStream(s);
 
         cv::Size tileSize;
-        GpuMat srcForLut;
+        const GpuMat &srcForLut = src;
+        tileSize = cv::Size(src.cols / tilesX_, src.rows / tilesY_);
 
+        /*
         if (src.cols % tilesX_ == 0 && src.rows % tilesY_ == 0) {
             tileSize = cv::Size(src.cols / tilesX_, src.rows / tilesY_);
             srcForLut = src;
@@ -160,7 +162,7 @@ namespace
 
             tileSize = cv::Size(srcExt_.cols / tilesX_, srcExt_.rows / tilesY_);
             srcForLut = srcExt_;
-        }
+        }*/
 
         const int tileSizeTotal = tileSize.area();
         const float lutScale = static_cast<float>(histSize - 1) / tileSizeTotal;
@@ -205,66 +207,65 @@ namespace
         CV_CUDEV_SAFE_CALL(cudaBindTextureToArray(tex, array_, channelDesc));
         */
 
-        if (type == CV_8UC1) {
+        //if (type == CV_8UC1) {
             clahe::transform<uchar>(src, dst, tilesX_, tilesY_, make_int2(tileSize.width, tileSize.height), stream);
-        } else { // type == CV_16UC1
+        /*} else { // type == CV_16UC1
             clahe::transform<ushort>(src, dst, tilesX_, tilesY_, make_int2(tileSize.width, tileSize.height), stream);
-        }
+        }*/
     }
 
-    void CLAHE_Impl::setClipLimit(double clipLimit)
-    {
+    void CLAHE_Impl::setClipLimit(double clipLimit) {
         clipLimit_ = clipLimit;
     }
 
-    double CLAHE_Impl::getClipLimit() const
-    {
+    double CLAHE_Impl::getClipLimit() const {
         return clipLimit_;
     }
 
-    void CLAHE_Impl::setTilesGridSize(cv::Size tileGridSize)
-    {
+    void CLAHE_Impl::setTilesGridSize(cv::Size tileGridSize) {
         tilesX_ = tileGridSize.width;
         tilesY_ = tileGridSize.height;
     }
 
-    cv::Size CLAHE_Impl::getTilesGridSize() const
-    {
-        return cv::Size(tilesX_, tilesY_);
+    cv::Size CLAHE_Impl::getTilesGridSize() const {
+        return { tilesX_, tilesY_ };
     }
 
-    void CLAHE_Impl::collectGarbage()
-    {
+    void CLAHE_Impl::collectGarbage() {
         srcExt_.release();
         lut_.release();
         CV_CUDEV_SAFE_CALL(cudaFreeArray(array_));
     }
 }
 
-cv::Ptr<CLAHE2D> createCLAHE2D(double clipLimit, const cv::Size &tileGridSize)
-{
+cv::Ptr<CLAHE2D> createCLAHE2D(double clipLimit, const cv::Size &tileGridSize) {
     return cv::makePtr<CLAHE_Impl>(clipLimit, tileGridSize.width, tileGridSize.height);
 }
 
 namespace clahe
 {
+    DEVICEQUALIFIER INLINEQUALIFIER
+    int reflect101(int x, int xmax) {
+      return min(x, xmax) - max(0, x - xmax);
+    }
+
     GLOBALQUALIFIER
-    void calcLutKernel_8U(const PtrStepb src, PtrStep<float> lut,
+    void calcLutKernel_8U(const PtrStepSzb src, PtrStep<float> lut,
                                      const int2 tileSize, const int tilesX,
                                      const int clipLimit, const float lutScale) {
         __shared__ int smem[256];
 
-        const int tx = blockIdx.x;
-        const int ty = blockIdx.y;
-        const unsigned int tid = threadIdx.y * blockDim.x + threadIdx.x;
+        const uint64_t tx = blockIdx.x;
+        const uint64_t ty = blockIdx.y;
+        const uint64_t tid = threadIdx.y * blockDim.x + threadIdx.x;
 
         smem[tid] = 0;
         __syncthreads();
 
-        for (int i = threadIdx.y; i < tileSize.y; i += blockDim.y) {
-            const uchar* srcPtr = src.ptr(ty * tileSize.y + i) + tx * tileSize.x;
-            for (int j = threadIdx.x; j < tileSize.x; j += blockDim.x) {
-                const int data = srcPtr[j];
+        for (uint64_t i = threadIdx.y; i < tileSize.y; i += blockDim.y) {
+            const uchar* srcPtr = src.ptr(reflect101(ty * tileSize.y + i, src.rows - 1));
+            for (uint64_t j = threadIdx.x; j < tileSize.x; j += blockDim.x) {
+                const int data = srcPtr[reflect101(tx * tileSize.x + j, src.cols - 1)];
                 ::atomicAdd(&smem[data], 1);
             }
         }
@@ -277,31 +278,25 @@ namespace clahe
 
         if (clipLimit > 0) {
             // clip histogram bar
-            /*
             int clipped = 0;
             if (tHistVal > clipLimit) {
                 clipped = tHistVal - clipLimit;
                 tHistVal = clipLimit;
             }
-            */
-            const int32_t temp = tHistVal - clipLimit;
-            const auto s = (temp & (1U << 31)) >> 31;
-            int clipped = (1 - s) * temp;
-            tHistVal = s * tHistVal + (1 - s) * clipLimit;
+            __syncthreads();
 
             // find number of overall clipped samples
             blockReduce<256>(smem, clipped, tid, plus<int>());
 
             // broadcast evaluated value
-            __shared__ int totalClipped;
-            __shared__ int redistBatch;
-            __shared__ int residual;
-            __shared__ int rStep;
+            __shared__ uint32_t redistBatch;
+            __shared__ uint32_t residual;
+            __shared__ uint32_t rStep;
 
             if (tid == 0) {
-                totalClipped = clipped;
+                uint32_t totalClipped = clipped;
                 redistBatch = totalClipped / 256;
-                residual = totalClipped & 0xff;//- redistBatch * 256;
+                residual = totalClipped & 0xffU;//- redistBatch * 256;
                 rStep = residual != 0 ? 256 / residual : 1;
             }
             __syncthreads();
@@ -316,10 +311,10 @@ namespace clahe
 
         const auto lutVal = static_cast<float>(blockScanInclusive<256>(tHistVal, smem, tid));
 
-        lut(ty * tilesX + tx, (int) tid) = lutScale * lutVal;
+        lut((int) (ty * tilesX + tx), (int) tid) = lutScale * lutVal;
     }
 
-    void calcLut_8U(PtrStepSzb src, PtrStep<float> lut, int tilesX, int tilesY, int2 tileSize, int clipLimit, float lutScale, cudaStream_t stream) {
+    void  calcLut_8U(PtrStepSzb src, PtrStep<float> lut, int tilesX, int tilesY, int2 tileSize, int clipLimit, float lutScale, cudaStream_t stream) {
         const dim3 block(32, 8);
         const dim3 grid(tilesX, tilesY);
 
@@ -358,7 +353,7 @@ namespace clahe
         CV_CUDEV_SAFE_CALL( cudaGetLastError() );
 
 
-        if (stream == 0) {
+        if (stream == nullptr) {
             CV_CUDEV_SAFE_CALL(cudaDeviceSynchronize());
         }
     }

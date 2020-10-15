@@ -21,55 +21,59 @@
 #define DEFAULT_CLIP_LIMIT  40.0
 #define DEFAULT_GRID_SIZE   8
 
+#define OUTPUT_IMAGE_HEIGHT 384
+#define OUTPUT_WINDOW_NAME  "output"
+
 template <typename T>
 constexpr static inline T sqr(const T &x) {
     return x * x;
 }
 
-static std::vector<cv::Mat> equalizeHistogram(const std::vector<cv::Mat> &in) {
-    std::vector<cv::Mat> out(in.size());
-    for (int i = 0; i < in.size(); ++i) {
-        cv::equalizeHist(in[i], out[i]);
+static cv::Mat equalizeHistogram(const cv::Mat &in, int reps=1) {
+    cv::Mat out;
+    for (int i = 0; i < reps; ++i) {
+        cv::equalizeHist(in, out);
     }
     return out;
 }
 
-static std::vector<cv::Mat> claheNative(const std::vector<cv::Mat> &in, double clipLimit, const cv::Size &gridSize) {
-    std::vector<cv::Mat> out(in.size());
+static cv::Mat claheNative(const cv::Mat &in, double clipLimit, const cv::Size &gridSize, int reps=1) {
+    cv::Mat out;
     auto clahe = cv::createCLAHE(clipLimit, gridSize);
-    for (int i = 0; i < in.size(); ++i) {
-        clahe->apply(in[i], out[i]);
+    for (int i = 0; i < reps; ++i) {
+        clahe->apply(in, out);
     }
     return out;
 }
 
-static std::vector<cv::Mat> claheCudaOpencv(const std::vector<cv::Mat> &in, double clipLimit, const cv::Size &gridSize) {
-    std::vector<cv::Mat> out(in.size());
+static cv::Mat claheCudaOpencv(const cv::Mat &in, double clipLimit, const cv::Size &gridSize, int reps=1) {
+    cv::Mat out;
     auto clahe = cv::cuda::createCLAHE(clipLimit, gridSize);
-    for (int i = 0; i < in.size(); ++i) {
-        cv::cuda::GpuMat tmp_in(in[i]), tmp_out;
+    cv::cuda::GpuMat tmp_in(in), tmp_out;
+    TIMERSTART(claheCudaOpencv);
+    for (int i = 0; i < reps; ++i) {
         clahe->apply(tmp_in, tmp_out);
-        tmp_out.download(out[i]);
     }
+    TIMERSTOP(claheCudaOpencv);
+    tmp_out.download(out);
     return out;
 }
 
-static std::vector<cv::Mat> claheCuda(const std::vector<cv::Mat> &in, double clipLimit, const cv::Size &gridSize) {
-    std::vector<cv::Mat> out(in.size());
+static cv::Mat claheCuda(const cv::Mat &in, double clipLimit, const cv::Size &gridSize, int reps=1) {
+    cv::Mat out;
     auto clahe = ::createCLAHE2D(clipLimit, gridSize);
-    for (int i = 0; i < in.size(); ++i) {
-        cv::cuda::GpuMat tmp_in(in[i]), tmp_out;
+    cv::cuda::GpuMat tmp_in(in), tmp_out;
+    TIMERSTART(claheCuda);
+    for (int i = 0; i < reps; ++i) {
         clahe->apply(tmp_in, tmp_out);
-        tmp_out.download(out[i]);
     }
+    TIMERSTOP(claheCuda);
+    tmp_out.download(out);
     return out;
 }
 
 static void warmupGPU(const cv::Mat &frame) {
-    cv::Mat tmp;
-    cv::resize(frame, tmp, cv::Size(1024, 1024));
-    std::vector<cv::Mat> data = { tmp, tmp, tmp, tmp };
-    claheCudaOpencv(data, 40, cv::Size(8, 8));
+    claheCudaOpencv(frame, 40, cv::Size(8, 8), 4);
 }
 
 static cv::Mat concat(const cv::Mat &topLeft, const cv::Mat &topRight, const cv::Mat &bottomLeft, const cv::Mat &bottomRight) {
@@ -100,11 +104,15 @@ static double mse(const cv::Mat &a, const cv::Mat &b) {
         auto a_row = a.ptr<uchar>(i);
         auto b_row = b.ptr<uchar>(i);
         for (int j = 0; j < a.cols; ++j) {
-            accum += sqr(a_row[j] - b_row[j]);
+            accum += sqr(double(a_row[j]) - double(b_row[j]));
         }
     }
 
     return accum / (a.rows * a.cols);
+}
+
+static double rms(const cv::Mat &a, const cv::Mat &b) {
+    return std::sqrt(mse(a, b));
 }
 
 int main(int argc, const char *argv[]) {
@@ -171,11 +179,6 @@ int main(int argc, const char *argv[]) {
 
     std::cout << "imageSize=[" << frame.rows << " x " << frame.cols << ']' << std::endl;
 
-    std::vector<cv::Mat> data(numFrames);
-    for (int i = 0; i < data.size(); ++i) {
-        frame.copyTo(data[i]);
-    }
-
     TIMERSTART(warmingGPU);
     warmupGPU(frame);
     TIMERSTOP(warmingGPU);
@@ -183,27 +186,28 @@ int main(int argc, const char *argv[]) {
     std::vector<cv::Mat> m(5);
     m[0] = frame;
     TIMERSTART(equalizeHistogram);
-    m[1] = equalizeHistogram(data)[0];
+    m[1] = equalizeHistogram(frame, numFrames);
     TIMERSTOP(equalizeHistogram);
 
     TIMERSTART(claheNative);
-    m[2] = claheNative(data, clipLimit, gridSize)[0];
+    m[2] = claheNative(frame, clipLimit, gridSize, numFrames);
     TIMERSTOP(claheNative);
 
-    TIMERSTART(claheCudaOpencv);
-    m[3] = claheCudaOpencv(data, clipLimit, gridSize)[0];
-    TIMERSTOP(claheCudaOpencv);
+    m[3] = claheCudaOpencv(frame, clipLimit, gridSize, numFrames);
 
-    TIMERSTART(claheCuda);
-    m[4] = claheCuda(data, clipLimit, gridSize)[0];
-    TIMERSTOP(claheCuda);
+    m[4] = claheCuda(frame, clipLimit, gridSize, numFrames);
+
+    std::cout << "RMS(src, claheCuda)            =" << rms(m[0], m[4]) << std::endl;
+    std::cout << "RMS(histEq, claheCuda)         =" << rms(m[1], m[4]) << std::endl;
+    std::cout << "RMS(native, claheCudaOpencv)   =" << rms(m[2], m[3]) << std::endl;
+    std::cout << "RMS(claheCudaOpencv, claheCuda)=" << rms(m[3], m[4]) << std::endl;
 
     if (showOutput) {
-        cv::namedWindow("output", cv::WINDOW_KEEPRATIO);
+        cv::namedWindow(OUTPUT_WINDOW_NAME, cv::WINDOW_KEEPRATIO);
 
         for (int i = 0; i < m.size(); ++i) {
             cv::Mat tmp;
-            double factor = 384.0 / double(m[i].rows);
+            double factor = double(OUTPUT_IMAGE_HEIGHT) / double(m[i].rows);
             cv::resize(m[i], tmp, cv::Size(), factor, factor);
             m[i] = tmp;
         }
@@ -216,7 +220,7 @@ int main(int argc, const char *argv[]) {
 
         cv::Mat output = concat(m[0], m[1], m[2], m[4]);
 
-        cv::imshow("output", output);
+        cv::imshow(OUTPUT_WINDOW_NAME, output);
         cv::waitKey(0);
     }
 
