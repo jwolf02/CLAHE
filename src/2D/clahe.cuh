@@ -3,34 +3,6 @@
 
 #include <opencv2/imgproc.hpp>
 
-namespace cv {
-    template <typename T>
-    class Volume_ {
-    public:
-
-        Volume_() : width(0), height(0), depth(0) {}
-
-        Volume_(T width, T height, T depth) : width(width), height(height), depth(depth) {}
-
-        Volume_(const Volume_ &v) : Volume_(v.width, v.height, v.depth) {}
-
-        T volume() const { return width * height * depth; }
-
-        bool empty() const {
-            return width <= 0 || height <= 0 || depth <= 0;
-        }
-
-        T width;
-
-        T height;
-
-        T depth;
-
-    };
-
-    typedef Volume_<int> Volume;
-}
-
 class CLAHE2D : public cv::CLAHE {
 public:
     using cv::CLAHE::apply;

@@ -42,17 +42,16 @@
 
 #if !defined CUDA_DISABLER
 
+#include <2D/clahe.cuh>
+#include <cuda_helpers.cuh>
 #include <opencv2/cudev.hpp>
-#include "clahe.cuh"
-#include "cuda_helpers.cuh"
 #include <opencv2/cudaarithm.hpp>
 
 using namespace cv::cudev;
 
 texture<float, cudaTextureType3D> tex;
 
-namespace clahe
-{
+namespace clahe {
     void calcLut_8U(PtrStepSzb src, PtrStep<float> lut, int tilesX, int tilesY, int2 tileSize, int clipLimit, float lutScale, cudaStream_t stream);
     void calcLut_16U(PtrStepSzus src, PtrStepus lut, int tilesX, int tilesY, int2 tileSize, int clipLimit, float lutScale, PtrStepSzi hist, cudaStream_t stream);
     template <typename T> void transform(PtrStepSz<T> src, PtrStepSz<T> dst, int tilesX, int tilesY, int2 tileSize, cudaStream_t stream);
@@ -93,7 +92,6 @@ namespace
     CLAHE_Impl::CLAHE_Impl(double clipLimit, int tilesX, int tilesY) :
             clipLimit_(clipLimit), tilesX_(tilesX), tilesY_(tilesY) {
 
-
         ensureSizeIsEnough(tilesX_ * tilesY_, 256, CV_32F, lut_);
 
         cudaChannelFormatDesc channelDesc = cudaCreateChannelDesc<float>();
@@ -101,25 +99,12 @@ namespace
         cudaExtent ext = make_cudaExtent(256, tilesX_, tilesY_);
         CV_CUDEV_SAFE_CALL(cudaMalloc3DArray(&array_, &channelDesc, ext));
 
-         /*
-        // and copy image data
-        cudaMemcpy3DParms myparms = { nullptr };
-        myparms.srcPos = make_cudaPos(0,0,0);
-        myparms.dstPos = make_cudaPos(0,0,0);
-        // The source pointer must be a cuda pitched ptr.
-        myparms.srcPtr = make_cudaPitchedPtr(lut_.data, ext.width * sizeof(float), ext.width, ext.height);
-        myparms.dstArray = array_;
-        myparms.extent = ext;
-        myparms.kind = cudaMemcpyDeviceToDevice;
-        CV_CUDEV_SAFE_CALL(cudaMemcpy3D(&myparms));
-        */
-
         // Set texture parameters
         tex.addressMode[0] = cudaAddressModeClamp;
         tex.addressMode[1] = cudaAddressModeClamp;
         tex.addressMode[2] = cudaAddressModeClamp;
         tex.filterMode = cudaFilterModeLinear;
-        tex.normalized = true;    // access with normalized texture coordinates
+        tex.normalized = false;    // access with normalized texture coordinates
 
         // Bind the array to the texture
         CV_CUDEV_SAFE_CALL(cudaBindTextureToArray(tex, array_, channelDesc));
@@ -146,23 +131,7 @@ namespace
         cudaStream_t stream = StreamAccessor::getStream(s);
 
         cv::Size tileSize;
-        const GpuMat &srcForLut = src;
         tileSize = cv::Size(src.cols / tilesX_, src.rows / tilesY_);
-
-        /*
-        if (src.cols % tilesX_ == 0 && src.rows % tilesY_ == 0) {
-            tileSize = cv::Size(src.cols / tilesX_, src.rows / tilesY_);
-            srcForLut = src;
-        } else {
-#ifndef HAVE_OPENCV_CUDAARITHM
-            throw_no_cuda();
-#else
-            cv::cuda::copyMakeBorder(src, srcExt_, 0, tilesY_ - (src.rows % tilesY_), 0, tilesX_ - (src.cols % tilesX_), cv::BORDER_REFLECT_101, cv::Scalar(), s);
-#endif
-
-            tileSize = cv::Size(srcExt_.cols / tilesX_, srcExt_.rows / tilesY_);
-            srcForLut = srcExt_;
-        }*/
 
         const int tileSizeTotal = tileSize.area();
         const float lutScale = static_cast<float>(histSize - 1) / tileSizeTotal;
@@ -174,15 +143,10 @@ namespace
         }
 
         if (type == CV_8UC1)
-            clahe::calcLut_8U(srcForLut, lut_, tilesX_, tilesY_, make_int2(tileSize.width, tileSize.height), clipLimit, lutScale, stream);
+            clahe::calcLut_8U(src, lut_, tilesX_, tilesY_, make_int2(tileSize.width, tileSize.height), clipLimit, lutScale, stream);
         else { CV_Assert(!!(false)); }
 
         cudaExtent ext = make_cudaExtent(256, tilesX_, tilesY_);
-        /*
-        cudaChannelFormatDesc channelDesc = cudaCreateChannelDesc<float>();
-        array_ = nullptr;
-        CV_CUDEV_SAFE_CALL(cudaMalloc3DArray(&array_, &channelDesc, ext));
-        */
 
         // and copy image data
         cudaMemcpy3DParms myparms = { nullptr };
@@ -194,18 +158,6 @@ namespace
         myparms.extent = ext;
         myparms.kind = cudaMemcpyDeviceToDevice;
         CV_CUDEV_SAFE_CALL(cudaMemcpy3D(&myparms));
-
-        /*
-        // Set texture parameters
-        tex.addressMode[0] = cudaAddressModeClamp;
-        tex.addressMode[1] = cudaAddressModeClamp;
-        tex.addressMode[2] = cudaAddressModeClamp;
-        tex.filterMode = cudaFilterModeLinear;
-        tex.normalized = true;    // access with normalized texture coordinates
-
-        // Bind the array to the texture
-        CV_CUDEV_SAFE_CALL(cudaBindTextureToArray(tex, array_, channelDesc));
-        */
 
         //if (type == CV_8UC1) {
             clahe::transform<uchar>(src, dst, tilesX_, tilesY_, make_int2(tileSize.width, tileSize.height), stream);
@@ -334,9 +286,9 @@ namespace clahe
         const unsigned int y = blockIdx.y * blockDim.y + threadIdx.y;
 
         if (x < src.cols && y < src.rows) {
-            const auto grayValue = (src(y, x) + 0.5f) / 255.0f;
-            const auto xPos = static_cast<float>(x) / static_cast<float>(tileSize.x * tilesX);
-            const auto yPos = static_cast<float>(y) / static_cast<float>(tileSize.y * tilesY);
+            const auto grayValue = src(y, x) + 0.5f;
+            const auto xPos = (static_cast<float>(x) / static_cast<float>(tileSize.x * tilesX - 1)) * static_cast<float>(tilesX);
+            const auto yPos = (static_cast<float>(y) / static_cast<float>(tileSize.y * tilesY - 1)) * static_cast<float>(tilesY);
             dst(y, x) = saturate_cast<T>(tex3D(tex, grayValue, xPos, yPos));
         }
     }
