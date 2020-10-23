@@ -55,18 +55,16 @@ static void transform(PtrStep<uchar> src, PtrStep<uchar> dest, PtrStep<uchar> lu
 
 namespace
 {
-class CLAHE3D_Impl : public cv::cuda::CLAHE3D
-    {
+class CLAHE3D_Impl : public cv::cuda::CLAHE3D {
     public:
 
-        explicit CLAHE3D_Impl(double clipLimit, const Size3i &tilesGridSize);
+        explicit CLAHE3D_Impl(double clipLimit, Size3i tilesGridSize);
 
         void apply(const std::vector<cv::Mat> &in, std::vector<cv::Mat> &out) override;
 
         void apply(const std::vector<cv::Mat> &in, std::vector<cv::Mat> &out, cv::cuda::Stream &stream) override;
 
-        void
-        apply(DevPtr<uchar> src, DevPtr<uchar> dest, int rows, int cols, int frames, cv::cuda::Stream &stream) override;
+        void apply(DevPtr<uchar> src, DevPtr<uchar> dest, int rows, int cols, int frames, cv::cuda::Stream &stream) override;
 
         void setClipLimit(double clipLimit) override;
 
@@ -93,7 +91,7 @@ cv::Ptr<cv::CLAHE3D> cv::cuda::createCLAHE3D(double clipLimit, Size3i grid) {
   return new CLAHE3D_Impl(clipLimit, grid);
 }
 
-CLAHE3D_Impl::CLAHE3D_Impl(double clipLimit, const Size3i &tilesGridSize) : _clipLimit(clipLimit), _tiles(tilesGridSize) {}
+CLAHE3D_Impl::CLAHE3D_Impl(double clipLimit, Size3i tilesGridSize) : _clipLimit(clipLimit), _tiles(std::move(tilesGridSize)) {}
 
 void CLAHE3D_Impl::setClipLimit(double clipLimit) { _clipLimit = clipLimit; }
 

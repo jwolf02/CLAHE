@@ -48,7 +48,7 @@ Size3i CLAHE3D_Impl::getTilesGridSize() const { return _tiles; }
 
 void CLAHE3D_Impl::collectGarbage() { _lut.release(); }
 
-cv::Ptr<CLAHE3D> createCLAHE3D(double clipLimit, const Size3i &tilesGridSize) {
+cv::Ptr<CLAHE3D> cv::createCLAHE3D(double clipLimit, Size3i tilesGridSize) {
   return new CLAHE3D_Impl(clipLimit, tilesGridSize);
 }
 
@@ -58,6 +58,7 @@ static void transform(const std::vector<cv::Mat> &in, std::vector<cv::Mat> &out,
 CLAHE3D_Impl::CLAHE3D_Impl(double clipLimit, const Size3i &tilesGridSize) : _clipLimit(clipLimit), _tiles(tilesGridSize) {}
 
 void CLAHE3D_Impl::apply(const std::vector<cv::Mat> &in, std::vector<cv::Mat> &out) {
+  // we need at least one frame per grid tile
   CV_Assert(in.size() >= _tiles.z);
 
   int3 tileSize = make_int3(in[0].cols / _tiles.x, in[0].rows / _tiles.y, in.size() / _tiles.z);
@@ -71,7 +72,11 @@ void CLAHE3D_Impl::apply(const std::vector<cv::Mat> &in, std::vector<cv::Mat> &o
 
   const int volume = _tiles.x * _tiles.y * _tiles.z;
 
-  cv::cuda::ensureSizeIsEnough(volume, 256, CV_8UC1, _lut);
+  if (_lut.empty()) {
+    _lut = cv::Mat(volume, 256, CV_8UC1);
+  } else if (_lut.rows < volume || _lut.cols < 256) {
+    cv::resize(_lut, _lut, cv::Size(volume, 256));
+  }
 
   calcLut(in, _lut, clipLimit, tileSize, _tiles.x, _tiles.y, _tiles.z);
   transform(in, out, _lut, tileSize, _tiles.x, _tiles.y, _tiles.z);

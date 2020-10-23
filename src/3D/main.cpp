@@ -117,13 +117,14 @@ int main(int argc, const char *argv[]) {
 
     cv::Mat target = cv::imread("../out.png", cv::IMREAD_GRAYSCALE);
 
-    std::cout << "imageSize=[" << frame.rows << " x " << frame.cols << ']' << std::endl;
-
     if (scale != 1.0) {
       cv::resize(frame, frame, cv::Size(), scale, scale, cv::INTER_LINEAR);
     }
 
-    auto clahe = cv::cuda::createCLAHE3D(clipLimit, cv::Size3i(gX, gY, gZ));
+    std::cout << "imageSize=[" << frame.rows << " x " << frame.cols << ']' << std::endl;
+
+    auto clahe = cv::createCLAHE3D(clipLimit, cv::Size3i(gX, gY, gZ));
+    auto clahe_cuda = cv::cuda::createCLAHE3D(clipLimit, cv::Size3i(gX, gY, gZ));
 
     std::vector<cv::Mat> in(std::max<int>(numFrames, gZ));
     std::vector<cv::Mat> out;
@@ -134,6 +135,10 @@ int main(int argc, const char *argv[]) {
     TIMERSTART(CLAHE3D)
     clahe->apply(in, out);
     TIMERSTOP(CLAHE3D)
+
+    TIMERSTART(CLAHE3DCuda)
+    clahe_cuda->apply(in, out);
+    TIMERSTOP(CLAHE3DCuda)
 
     if (showOutput) {
       const double factor = double(OUTPUT_IMAGE_HEIGHT) / double(frame.rows);
