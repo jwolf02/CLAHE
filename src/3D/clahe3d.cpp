@@ -82,8 +82,9 @@ void CLAHE3D_Impl::apply(const std::vector<cv::Mat> &in, std::vector<cv::Mat> &o
   transform(in, out, _lut, tileSize, _tiles.x, _tiles.y, _tiles.z);
 }
 
-static inline int reflect101(int x, int xmax) {
-  return std::min(x, xmax) - std::max(0, x - xmax);
+static inline int reflect101(int p, int len) {
+  const auto last = len - 1;
+  return last - abs(p - last);
 }
 
 void calcLut(const std::vector<cv::Mat> &in, cv::Mat &lut, int clipLimit, int3 tileSize, int tilesX, int tilesY, int tilesZ) {
@@ -99,11 +100,11 @@ void calcLut(const std::vector<cv::Mat> &in, cv::Mat &lut, int clipLimit, int3 t
 
         // compute histogram
         for (int i = 0; i < tileSize.z; ++i) {
-          const auto &mat = in[reflect101(i, in.size() - 1)];
+          const auto &mat = in[reflect101(i, in.size())];
           for (int j = 0; j < tileSize.y; ++j) {
-            const uchar* srcPtr = mat.ptr(reflect101((int) (ty * tileSize.y + j), mat.rows - 1));
+            const uchar* srcPtr = mat.ptr(reflect101((int) (ty * tileSize.y + j), mat.rows));
             for (int k = 0; k < tileSize.x; ++k) {
-              const auto val = srcPtr[reflect101((int) tx * tileSize.x + k, mat.cols - 1)];
+              const auto val = srcPtr[reflect101((int) tx * tileSize.x + k, mat.cols)];
               smem[val]++;
             }
           }

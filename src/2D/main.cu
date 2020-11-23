@@ -3,7 +3,6 @@
 #include <cuda_helpers.cuh>
 #include <opencv2/opencv.hpp>
 #include <common.hpp>
-#include "2D/clahe.cuh"
 
 #ifdef CUDA_SHARED_MEMORY
 #define CUDA_MALLOC(x, len)         x = malloc(len)
@@ -21,8 +20,7 @@
 #define DEFAULT_CLIP_LIMIT  40.0
 #define DEFAULT_GRID_SIZE   8
 
-#define OUTPUT_IMAGE_HEIGHT 384
-#define OUTPUT_WINDOW_NAME  "output"
+
 
 template <typename T>
 constexpr static inline T sqr(const T &x) {
@@ -61,7 +59,7 @@ static cv::Mat claheCudaOpencv(const cv::Mat &in, double clipLimit, const cv::Si
 
 static cv::Mat claheCuda(const cv::Mat &in, double clipLimit, const cv::Size &gridSize, int reps=1) {
     cv::Mat out;
-    auto clahe = ::createCLAHE2D(clipLimit, gridSize);
+    auto clahe = cv::cuda::createCLAHE(clipLimit, gridSize);
     cv::cuda::GpuMat tmp_in(in), tmp_out;
     TIMERSTART(claheCuda);
     for (int i = 0; i < reps; ++i) {
@@ -76,13 +74,7 @@ static void warmupGPU(const cv::Mat &frame) {
     claheCudaOpencv(frame, 40, cv::Size(8, 8), 4);
 }
 
-static cv::Mat concat(const cv::Mat &topLeft, const cv::Mat &topRight, const cv::Mat &bottomLeft, const cv::Mat &bottomRight) {
-    cv::Mat top, bottom, output;
-    cv::hconcat(topLeft, topRight, top);
-    cv::hconcat(bottomLeft, bottomRight, bottom);
-    cv::vconcat(top, bottom, output);
-    return output;
-}
+
 
 static void drawGrid(cv::Mat &mat, const cv::Size &grid, const cv::Scalar &color=cv::Scalar(0)) {
 
@@ -113,6 +105,17 @@ static double mse(const cv::Mat &a, const cv::Mat &b) {
 
 static double rms(const cv::Mat &a, const cv::Mat &b) {
     return std::sqrt(mse(a, b));
+}
+
+static double avg(const cv::Mat &a) {
+  double accum = 0;
+  for (int i = 0; i < a.rows; ++i) {
+    auto ptr = a.ptr(i);
+    for (int j = 0; j < a.cols; ++j) {
+      accum += (double) ptr[j];
+    }
+  }
+  return accum / double(a.rows * a.cols);
 }
 
 int main(int argc, const char *argv[]) {
@@ -205,30 +208,11 @@ int main(int argc, const char *argv[]) {
     std::cout << "RMS(native, claheCudaOpencv)   =" << rms(m[2], m[3]) << std::endl;
     std::cout << "RMS(claheCudaOpencv, claheCuda)=" << rms(m[3], m[4]) << std::endl;
 
+    std::cout << "AVG(claheCudaOpencv)           =" << avg(m[3]) << std::endl;
+    std::cout << "AVG(claheCuda)                 =" << avg(m[4]) << std::endl;
+
     if (showOutput) {
-        cv::namedWindow(OUTPUT_WINDOW_NAME, cv::WINDOW_KEEPRATIO);
 
-        for (int i = 0; i < m.size(); ++i) {
-            cv::Mat tmp;
-            double factor = double(OUTPUT_IMAGE_HEIGHT) / double(m[i].rows);
-            cv::resize(m[i], tmp, cv::Size(), factor, factor);
-            m[i] = tmp;
-        }
-
-        if (saveOutput) {
-          cv::imwrite("out.png", m[4]);
-        }
-
-        // draw the grid used for clahe on the image
-        if (grid) {
-            drawGrid(m[2], gridSize);
-            drawGrid(m[4], gridSize);
-        }
-
-        cv::Mat output = concat(m[0], m[1], m[2], m[4]);
-
-        cv::imshow(OUTPUT_WINDOW_NAME, output);
-        cv::waitKey(0);
     }
 
     return EXIT_SUCCESS;

@@ -8,9 +8,7 @@ find_package(OpenCV REQUIRED)
 
 set(2D_SOURCES          src/2D/main.cu
                         src/common.hpp
-                        src/cuda_helpers.cuh
-                        src/2D/clahe.cu
-                        src/2D/clahe.cuh)
+                        src/cuda_helpers.cuh)
 
 add_executable(CLAHE2D ${2D_SOURCES})
 target_link_libraries(CLAHE2D PUBLIC ${OpenCV_LIBS})
@@ -21,10 +19,7 @@ set_target_properties(CLAHE2D PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
 set(3D_SOURCES          src/3D/main.cpp
                         src/common.hpp
                         src/cuda_helpers.cuh
-                        src/3D/clahe3d.cuh
-                        src/3D/clahe3d.cu
-                        src/3D/clahe3d.hpp
-                        src/3D/clahe3d.cpp)
+                        src/3D/clahe3d.hpp)
 
 add_executable(CLAHE3D ${3D_SOURCES})
 target_link_libraries(CLAHE3D PUBLIC ${OpenCV_LIBS})
@@ -32,3 +27,10 @@ target_include_directories(CLAHE3D PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src ${CMAK
 
 set_target_properties(CLAHE3D PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
 
+set(test_SOURCES        src/test/main.cu
+                        src/test/nifti.cpp
+                        src/test/nifti.hpp)
+
+add_executable(test ${test_SOURCES})
+target_link_libraries(test PUBLIC ${OpenCV_LIBS})
+target_include_directories(test PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src ${CMAKE_CURRENT_SOURCE_DIR}/src/test ${OpenCV_INCLUDE_DIRS})

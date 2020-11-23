@@ -49,7 +49,7 @@
 
 using namespace cv::cudev;
 
-texture<float, cudaTextureType3D> tex;
+
 
 namespace clahe {
     void calcLut_8U(PtrStepSzb src, PtrStep<float> lut, int tilesX, int tilesY, int2 tileSize, int clipLimit, float lutScale, cudaStream_t stream);
@@ -87,6 +87,7 @@ namespace
         GpuMat hist_; // histogram on global memory for CV_16UC1 case
 
         cudaArray_t array_;
+        cudaExtent extent_;
     };
 
     CLAHE_Impl::CLAHE_Impl(double clipLimit, int tilesX, int tilesY) :
@@ -126,7 +127,7 @@ namespace
 
         const int histSize = type == CV_8UC1 ? 256 : 65536;
 
-        ensureSizeIsEnough(tilesX_ * tilesY_, histSize, CV_32F, lut_);
+        ensureSizeIsEnough(tilesX_ * tilesY_, histSize, CV_32FC1, lut_);
 
         cudaStream_t stream = StreamAccessor::getStream(s);
 
@@ -197,117 +198,119 @@ cv::Ptr<CLAHE2D> createCLAHE2D(double clipLimit, const cv::Size &tileGridSize) {
 namespace clahe
 {
     DEVICEQUALIFIER INLINEQUALIFIER
-    int reflect101(int x, int xmax) {
-      return min(x, xmax) - max(0, x - xmax);
+    int reflect101(int p, int len) {
+      //return min(p, len - 1) - max(0, p - len - 1);
+      const auto last = len - 1;
+      return last - abs(p - last);
     }
 
     GLOBALQUALIFIER
     void calcLutKernel_8U(const PtrStepSzb src, PtrStep<float> lut,
-                                     const int2 tileSize, const int tilesX,
-                                     const int clipLimit, const float lutScale) {
-        __shared__ int smem[256];
+                          const int2 tileSize, const int tilesX,
+                          const int clipLimit, const float lutScale) {
+      __shared__ int smem[256];
 
-        const uint64_t tx = blockIdx.x;
-        const uint64_t ty = blockIdx.y;
-        const uint64_t tid = threadIdx.y * blockDim.x + threadIdx.x;
+      const uint64_t tx = blockIdx.x;
+      const uint64_t ty = blockIdx.y;
+      const uint64_t tid = threadIdx.y * blockDim.x + threadIdx.x;
 
-        smem[tid] = 0;
-        __syncthreads();
+      smem[tid] = 0;
+      __syncthreads();
 
-        for (uint64_t i = threadIdx.y; i < tileSize.y; i += blockDim.y) {
-            const uchar* srcPtr = src.ptr(reflect101(ty * tileSize.y + i, src.rows - 1));
-            for (uint64_t j = threadIdx.x; j < tileSize.x; j += blockDim.x) {
-                const int data = srcPtr[reflect101(tx * tileSize.x + j, src.cols - 1)];
-                ::atomicAdd(&smem[data], 1);
-            }
+      for (uint64_t i = threadIdx.y; i < tileSize.y; i += blockDim.y) {
+        const uchar* srcPtr = src.ptr(reflect101(ty * tileSize.y + i, src.rows));
+        for (uint64_t j = threadIdx.x; j < tileSize.x; j += blockDim.x) {
+          const int data = srcPtr[reflect101(tx * tileSize.x + j, src.cols)];
+          ::atomicAdd(&smem[data], 1);
         }
+      }
 
-        __syncthreads();
+      __syncthreads();
 
-        int tHistVal = smem[tid];
+      int tHistVal = smem[tid];
 
-        __syncthreads();
+      __syncthreads();
 
-        if (clipLimit > 0) {
-            // clip histogram bar
-            int clipped = 0;
-            if (tHistVal > clipLimit) {
-                clipped = tHistVal - clipLimit;
-                tHistVal = clipLimit;
-            }
-            __syncthreads();
-
-            // find number of overall clipped samples
-            blockReduce<256>(smem, clipped, tid, plus<int>());
-
-            // broadcast evaluated value
-            __shared__ uint32_t redistBatch;
-            __shared__ uint32_t residual;
-            __shared__ uint32_t rStep;
-
-            if (tid == 0) {
-                uint32_t totalClipped = clipped;
-                redistBatch = totalClipped / 256;
-                residual = totalClipped & 0xffU;//- redistBatch * 256;
-                rStep = residual != 0 ? 256 / residual : 1;
-            }
-            __syncthreads();
-
-            // redistribute clipped samples evenly
-            tHistVal += redistBatch;
-
-            if (residual && tid % rStep == 0 && tid / rStep < residual) {
-                tHistVal += 1;
-            }
+      if (clipLimit > 0) {
+        // clip histogram bar
+        int clipped = 0;
+        if (tHistVal > clipLimit) {
+          clipped = tHistVal - clipLimit;
+          tHistVal = clipLimit;
         }
+        __syncthreads();
 
-        const auto lutVal = static_cast<float>(blockScanInclusive<256>(tHistVal, smem, tid));
+        // find number of overall clipped samples
+        blockReduce<256>(smem, clipped, tid, plus<int>());
 
-        lut((int) (ty * tilesX + tx), (int) tid) = lutScale * lutVal;
+        // broadcast evaluated value
+        __shared__ uint32_t redistBatch;
+        __shared__ uint32_t residual;
+        __shared__ uint32_t rStep;
+
+        if (tid == 0) {
+          uint32_t totalClipped = clipped;
+          redistBatch = totalClipped / 256;
+          residual = totalClipped & 0xffU;//- redistBatch * 256;
+          rStep = residual != 0 ? 256 / residual : 1;
+        }
+        __syncthreads();
+
+        // redistribute clipped samples evenly
+        tHistVal += redistBatch;
+
+        if (residual && tid % rStep == 0 && tid / rStep < residual) {
+          tHistVal += 1;
+        }
+      }
+
+      const auto lutVal = static_cast<float>(blockScanInclusive<256>(tHistVal, smem, tid));
+
+      lut((int) (ty * tilesX + tx), (int) tid) = lutScale * lutVal;
     }
 
     void  calcLut_8U(PtrStepSzb src, PtrStep<float> lut, int tilesX, int tilesY, int2 tileSize, int clipLimit, float lutScale, cudaStream_t stream) {
-        const dim3 block(32, 8);
-        const dim3 grid(tilesX, tilesY);
+      const dim3 block(32, 8);
+      const dim3 grid(tilesX, tilesY);
 
-        calcLutKernel_8U<<<grid, block, 0, stream>>>(src, lut, tileSize, tilesX, clipLimit, lutScale);
+      calcLutKernel_8U<<<grid, block, 0, stream>>>(src, lut, tileSize, tilesX, clipLimit, lutScale);
 
-        CV_CUDEV_SAFE_CALL(cudaGetLastError());
+      CV_CUDEV_SAFE_CALL(cudaGetLastError());
 
-        if (stream == nullptr) {
-            CV_CUDEV_SAFE_CALL(cudaDeviceSynchronize());
-        }
+      if (stream == nullptr) {
+        CV_CUDEV_SAFE_CALL(cudaDeviceSynchronize());
+      }
     }
 
     template <typename T>
     __global__ void transformKernel(const PtrStepSz<T> src, PtrStepSz<T> dst, const int2 tileSize, const int tilesX, const int tilesY)
     {
-        const unsigned int x = blockIdx.x * blockDim.x + threadIdx.x;
-        const unsigned int y = blockIdx.y * blockDim.y + threadIdx.y;
+      const unsigned int x = blockIdx.x * blockDim.x + threadIdx.x;
+      const unsigned int y = blockIdx.y * blockDim.y + threadIdx.y;
 
-        if (x < src.cols && y < src.rows) {
-            const auto grayValue = src(y, x) + 0.5f;
-            const auto xPos = (static_cast<float>(x) / static_cast<float>(tileSize.x * tilesX - 1)) * static_cast<float>(tilesX);
-            const auto yPos = (static_cast<float>(y) / static_cast<float>(tileSize.y * tilesY - 1)) * static_cast<float>(tilesY);
-            dst(y, x) = saturate_cast<T>(tex3D(tex, grayValue, xPos, yPos));
-        }
+      if (x < src.cols && y < src.rows) {
+        const auto grayValue = src(y, x) + 0.5f;
+        const auto xPos = (static_cast<float>(x) / static_cast<float>(tileSize.x * tilesX - 1)) * static_cast<float>(tilesX);
+        const auto yPos = (static_cast<float>(y) / static_cast<float>(tileSize.y * tilesY - 1)) * static_cast<float>(tilesY);
+        dst(y, x) = saturate_cast<T>(tex3D(tex, grayValue, xPos, yPos));
+      }
     }
 
     template <typename T>
     void transform(PtrStepSz<T> src, PtrStepSz<T> dst, int tilesX, int tilesY, int2 tileSize, cudaStream_t stream)
     {
-        const dim3 block(32, 8);
-        const dim3 grid(divUp(src.cols, block.x), divUp(src.rows, block.y));
+      const dim3 block(32, 8);
+      const dim3 grid(divUp(src.cols, block.x), divUp(src.rows, block.y));
 
-        CV_CUDEV_SAFE_CALL( cudaFuncSetCacheConfig(transformKernel<T>, cudaFuncCachePreferL1) );
+      CV_CUDEV_SAFE_CALL( cudaFuncSetCacheConfig(transformKernel<T>, cudaFuncCachePreferL1) );
 
-        transformKernel<T><<<grid, block, 0, stream>>>(src, dst, tileSize, tilesX, tilesY);
-        CV_CUDEV_SAFE_CALL( cudaGetLastError() );
+      transformKernel<T><<<grid, block, 0, stream>>>(src, dst, tileSize, tilesX, tilesY);
+      CV_CUDEV_SAFE_CALL( cudaGetLastError() );
 
 
-        if (stream == nullptr) {
-            CV_CUDEV_SAFE_CALL(cudaDeviceSynchronize());
-        }
+      if (stream == nullptr) {
+        CV_CUDEV_SAFE_CALL(cudaDeviceSynchronize());
+      }
     }
 }
 

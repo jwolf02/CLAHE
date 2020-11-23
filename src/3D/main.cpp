@@ -2,8 +2,6 @@
 #include <opencv2/opencv.hpp>
 #include <vector>
 #include "cuda_helpers.cuh"
-#include "clahe3d.hpp"
-#include "clahe3d.cuh"
 #include "common.hpp"
 
 #define DEFAULT_NUM_FRAMES  1
@@ -55,6 +53,17 @@ static double mse(const cv::Mat &a, const cv::Mat &b) {
 
 static double rms(const cv::Mat &a, const cv::Mat &b) {
     return std::sqrt(mse(a, b));
+}
+
+static double avg(const cv::Mat &a) {
+  double accum = 0;
+  for (int i = 0; i < a.rows; ++i) {
+    auto ptr = a.ptr(i);
+    for (int j = 0; j < a.cols; ++j) {
+      accum += (double) ptr[j];
+    }
+  }
+  return accum / double(a.rows * a.cols);
 }
 
 int main(int argc, const char *argv[]) {
@@ -123,18 +132,13 @@ int main(int argc, const char *argv[]) {
 
     std::cout << "imageSize=[" << frame.rows << " x " << frame.cols << ']' << std::endl;
 
-    auto clahe = cv::createCLAHE3D(clipLimit, cv::Size3i(gX, gY, gZ));
-    auto clahe_cuda = cv::cuda::createCLAHE3D(clipLimit, cv::Size3i(gX, gY, gZ));
+    auto clahe_cuda = cv::cuda::createCLAHE3D(clipLimit, cv::cuda::Size3i(gX, gY, gZ));
 
     std::vector<cv::Mat> in(std::max<int>(numFrames, gZ));
     std::vector<cv::Mat> out;
     for (int i = 0; i < in.size(); ++i) {
       in[i] = frame;
     }
-
-    TIMERSTART(CLAHE3D)
-    clahe->apply(in, out);
-    TIMERSTOP(CLAHE3D)
 
     TIMERSTART(CLAHE3DCuda)
     clahe_cuda->apply(in, out);
@@ -148,6 +152,7 @@ int main(int argc, const char *argv[]) {
       if (!target.empty()) {
         std::cout << rms(out[0], target) << std::endl;
       }
+      std::cout << avg(out[0]) << std::endl;
       drawGrid(out[0], cv::Size(gX, gY));
       cv::hconcat(target.empty() ? frame : target, out[0], output);
       cv::namedWindow(OUTPUT_WINDOW_NAME, cv::WINDOW_KEEPRATIO);

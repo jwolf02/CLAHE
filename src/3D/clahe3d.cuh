@@ -1,7 +1,8 @@
 #ifndef __CLAHE3D_CUH
 #define __CLAHE3D_CUH
 
-#include <clahe3d.hpp>
+#include <opencv2/imgproc.hpp>
+#include <opencv2/core/cuda_types.hpp>
 
 namespace cv {
     namespace cuda {
@@ -9,7 +10,7 @@ namespace cv {
         class CLAHE3D : public cv::CLAHE3D {
         public:
 
-            void apply(const std::vector<cv::Mat> &, std::vector<cv::Mat> &) override = 0;
+            using cv::CLAHE3D::apply;
 
             virtual void apply(const std::vector<cv::Mat> &, std::vector<cv::Mat> &, cv::cuda::Stream &) = 0;
 

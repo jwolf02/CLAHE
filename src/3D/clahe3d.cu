@@ -43,7 +43,6 @@
 #if !defined CUDA_DISABLER
 
 #include <clahe3d.cuh>
-#include <cuda_helpers.cuh>
 #include <opencv2/cudev.hpp>
 
 using namespace cv;
@@ -108,6 +107,8 @@ void CLAHE3D_Impl::apply(const std::vector<cv::Mat> &in, std::vector<cv::Mat> &o
 }
 
 void CLAHE3D_Impl::apply(const std::vector<cv::Mat> &in, std::vector<cv::Mat> &out, cv::cuda::Stream &stream) {
+  CV_Assert(!in.empty() && in[0].type() == CV_8UC1);
+
   cv::cuda::GpuMat src;
   cv::cuda::GpuMat dest;
 
@@ -158,8 +159,9 @@ void CLAHE3D_Impl::apply(DevPtr<uchar> src, DevPtr<uchar> dest, int rows, int co
 }
 
 DEVICEQUALIFIER INLINEQUALIFIER
-int reflect101(int x, int xmax) {
-  return min(x, xmax) - max(0, x - xmax);
+int reflect101(int p, int len) {
+  const auto last = len - 1;
+  return last - abs(p - last);
 }
 
 GLOBALQUALIFIER
@@ -175,11 +177,11 @@ void calcLut_kernel(PtrStep<uchar> src, PtrStep<uchar> lut, int3 tiles, int3 til
   __syncthreads();
 
   for (uint64_t i = tz * tileSize.z; i < (tz + 1) * tileSize.z; ++i) {
-    const int ri = reflect101((int) i, inputSize.z - 1);
+    const int ri = reflect101((int) i, inputSize.z);
     for (uint64_t j = threadIdx.y; j < tileSize.y; j += blockDim.y) {
-      const uchar *srcPtr = src.ptr(ri * tiles.x + reflect101(ty * tileSize.y + j, inputSize.x - 1));
+      const uchar *srcPtr = src.ptr(ri * tiles.x + reflect101(ty * tileSize.y + j, inputSize.x));
       for (uint64_t k = threadIdx.x; k < tileSize.x; k += blockDim.x) {
-        const int data = srcPtr[reflect101(tx * tileSize.x + k, inputSize.y - 1)];
+        const int data = srcPtr[reflect101(tx * tileSize.x + k, inputSize.y)];
         ::atomicAdd(&smem[data], 1);
       }
     }
