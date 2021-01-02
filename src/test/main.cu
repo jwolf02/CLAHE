@@ -51,6 +51,7 @@ int main(int argc, char *argv[]) {
   }
   std::string dirname = args[1];
 
+  int numImages = 1024;
   double clipLimit = 40.0;
   int numTiles = 8;
   bool equalizeHist = false;
@@ -66,7 +67,7 @@ int main(int argc, char *argv[]) {
     } else if (string::starts_with(arg, "--numTiles=")) {
       auto tokens = string::split(arg, "=");
       numTiles = tokens.size() >= 2 ? strtol(tokens[1].c_str(), nullptr, 10) : numTiles;
-    } else if (arg == "--equalizeHist") {
+    } else if (arg == "--HE") {
       equalizeHist = true;
     } else if (arg == "--CLAHE") {
       useClahe = true;
@@ -76,11 +77,15 @@ int main(int argc, char *argv[]) {
       texMem = true;
     } else if (arg == "--gpu") {
       gpu = true;
+    } else if (string::starts_with(arg, "--numImages=")) {
+      auto tokens = string::split(arg, "=");
+      numImages = tokens.size() >= 2 ? strtol(tokens[1].c_str(), nullptr, 10) : numImages;
     } else {
       std::cout << "unrecognized option '" << arg << "'" << std::endl;
     }
   }
 
+  /*
   std::vector<std::string> files = getAllFiles(dirname);
   std::vector<std::string> nifti_files;
   std::copy_if(files.begin(), files.end(), std::back_inserter(nifti_files),
@@ -110,6 +115,31 @@ int main(int argc, char *argv[]) {
   }
   TIMERSTOP(readNIFTI)
 
+  int i = 0;
+  for (auto &mat : frames) {
+    cv::resize(mat, mat, cv::Size(4096, 3072));
+    auto fname = std::to_string(i++) + ".png";
+    std::cout << "writing " << fname << "..." << std::endl;
+    cv::imwrite(fname, mat);
+  }*/
+
+  std::vector<cv::Mat> frames;
+
+  dirname += '/';
+
+  TIMERSTART(readImages);
+  for (int i = 0; i < numImages; ++i) {
+    cv::Mat frame = cv::imread(dirname + std::to_string(i) + ".png", cv::IMREAD_GRAYSCALE );
+    if (frame.empty()) {
+      break;
+    }
+    //cv::resize(frame, frame, cv::Size(frame.cols + 1, frame.rows));
+    frames.push_back(frame);
+  }
+  TIMERSTOP(readImages);
+
+  std::cout << "loaded " << frames.size() << " frames" << std::endl;
+
   CV_Assert(!frames.empty());
 
   size_t bytes = 0;
@@ -125,11 +155,33 @@ int main(int argc, char *argv[]) {
 
   if (equalizeHist) {
     std::vector<cv::Mat> out(frames.size());
-    TIMERSTART(equalizeHist)
-    for (size_t i = 0; i < frames.size(); ++i) {
-      cv::equalizeHist(frames[i], out[i]);
-    }
-    TIMERSTOP(equalizeHist)
+    if (gpu) {
+      std::vector<cv::cuda::GpuMat> gpuFrames(frames.size());
+      TIMERSTART(upload);
+      for (size_t i = 0; i < frames.size(); ++i) {
+        gpuFrames[i].upload(frames[i]);
+      }
+      TIMERSTOP(upload);
+
+      // warmup
+      cv::cuda::equalizeHist(gpuFrames[0], gpuFrames[0]);
+
+      TIMERSTART(HEgpu);
+      for (size_t i = 0; i < frames.size(); ++i) {
+        cv::cuda::equalizeHist(gpuFrames[i], gpuFrames[i]);
+      }
+      TIMERSTOP(HEgpu);
+
+      for (size_t i = 0; i < frames.size(); ++i) {
+        gpuFrames[i].download(out[i]);
+      }
+    } else {
+      TIMERSTART(equalizeHist)
+      for (size_t i = 0; i < frames.size(); ++i) {
+        cv::equalizeHist(frames[i], out[i]);
+      }
+      TIMERSTOP(equalizeHist)
+    } 
     equalizeHistOut = std::move(out);
   }
 
@@ -141,7 +193,11 @@ int main(int argc, char *argv[]) {
         gpuFrames[i].upload(frames[i]);
       }
 
-      auto clahe = cv::cuda::createCLAHE(clipLimit, cv::Size(numTiles, numTiles), texMem);
+      auto clahe = cv::cuda::createCLAHE(clipLimit, cv::Size(numTiles, numTiles));
+      
+      // warmup
+      clahe->apply(gpuFrames[0], gpuFrames[0]);
+      
       TIMERSTART(CLAHE2D)
       for (size_t i = 0; i < gpuFrames.size(); ++i) {
         clahe->apply(gpuFrames[i], gpuFrames[i]);
@@ -162,6 +218,7 @@ int main(int argc, char *argv[]) {
     clahe2DOut = std::move(out);
   }
 
+  /*
   if (useClahe3D) {
     std::vector<cv::Mat> out;
     auto clahe = cv::cuda::createCLAHE3D(clipLimit, cv::cuda::Size3i(numTiles, numTiles, numTiles));
@@ -180,7 +237,7 @@ int main(int argc, char *argv[]) {
     cudaFree(dev_out);
     clahe3DOut = std::move(out);
   }
-
+  */
   /*
   cv::namedWindow(OUTPUT_WINDOW_NAME, cv::WINDOW_KEEPRATIO);
 
