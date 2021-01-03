@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.17)
+cmake_minimum_required(VERSION 3.10)
 project(CLAHE CXX CUDA)
 
 set(CMAKE_CUDA_STANDARD 14)
@@ -27,10 +27,10 @@ target_include_directories(CLAHE3D PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src ${CMAK
 
 set_target_properties(CLAHE3D PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
 
-set(test_SOURCES        src/test/main.cu
+set(test_SOURCES        src/test/main1.cu
                         src/test/nifti.cpp
                         src/test/nifti.hpp)
 
-add_executable(test ${test_SOURCES})
-target_link_libraries(test PUBLIC ${OpenCV_LIBS})
-target_include_directories(test PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src ${CMAKE_CURRENT_SOURCE_DIR}/src/test ${OpenCV_INCLUDE_DIRS})
+add_executable(test_clahe ${test_SOURCES})
+target_link_libraries(test_clahe PUBLIC ${OpenCV_LIBS})
+target_include_directories(test_clahe PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src ${CMAKE_CURRENT_SOURCE_DIR}/src/test ${OpenCV_INCLUDE_DIRS})

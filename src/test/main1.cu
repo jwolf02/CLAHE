@@ -123,148 +123,84 @@ int main(int argc, char *argv[]) {
     cv::imwrite(fname, mat);
   }*/
 
-  std::vector<cv::Mat> frames;
-
-  dirname += '/';
-
-  TIMERSTART(readImages);
-  for (int i = 0; i < numImages; ++i) {
-    cv::Mat frame = cv::imread(dirname + std::to_string(i) + ".png", cv::IMREAD_GRAYSCALE );
-    if (frame.empty()) {
-      break;
-    }
-    //cv::resize(frame, frame, cv::Size(frame.cols + 1, frame.rows));
-    frames.push_back(frame);
-  }
-  TIMERSTOP(readImages);
-
-  std::cout << "loaded " << frames.size() << " frames" << std::endl;
-
-  CV_Assert(!frames.empty());
-
-  size_t bytes = 0;
-  for (auto &mat : frames) {
-    cv::resize(mat, mat, cv::Size(frames[0].cols, frames[0].rows));
-    bytes += mat.rows * mat.cols;
-  }
-  std::cout << bytes / 1000 << " KBytes" << std::endl;
-
-  /*
-  std::vector<cv::Mat> equalizeHistOut;
-  std::vector<cv::Mat> clahe2DOut;
-  std::vector<cv::Mat> clahe3DOut;
-
-  if (equalizeHist) {
-    std::vector<cv::Mat> out(frames.size());
-    if (gpu) {
-      std::vector<cv::cuda::GpuMat> gpuFrames(frames.size());
-      TIMERSTART(upload);
-      for (size_t i = 0; i < frames.size(); ++i) {
-        gpuFrames[i].upload(frames[i]);
-      }
-      TIMERSTOP(upload);
-
-      // warmup
-      cv::cuda::equalizeHist(gpuFrames[0], gpuFrames[0]);
-
-      TIMERSTART(HEgpu);
-      for (size_t i = 0; i < frames.size(); ++i) {
-        cv::cuda::equalizeHist(gpuFrames[i], gpuFrames[i]);
-      }
-      TIMERSTOP(HEgpu);
-
-      for (size_t i = 0; i < frames.size(); ++i) {
-        gpuFrames[i].download(out[i]);
-      }
-    } else {
-      TIMERSTART(equalizeHist)
-      for (size_t i = 0; i < frames.size(); ++i) {
-        cv::equalizeHist(frames[i], out[i]);
-      }
-      TIMERSTOP(equalizeHist)
-    } 
-    equalizeHistOut = std::move(out);
+  cv::Mat frame;
+  frame = cv::imread(dirname, cv::IMREAD_GRAYSCALE);
+  if (frame.empty()) {
+    std::cout << "failed to read frame" << std::endl;
+    return EXIT_FAILURE;
   }
 
-  if (useClahe) {
-    std::vector<cv::Mat> out(frames.size());
-    if (gpu) {
-      std::vector<cv::cuda::GpuMat> gpuFrames(frames.size());
-      for (size_t i = 0; i < frames.size(); ++i) {
-        gpuFrames[i].upload(frames[i]);
-      }
+  cv::Mat out;
+  cv::equalizeHist(frame, out);
+  cv::imwrite("./HE.png", out);
 
-      auto clahe = cv::cuda::createCLAHE(clipLimit, cv::Size(numTiles, numTiles));
-      
-      // warmup
-      clahe->apply(gpuFrames[0], gpuFrames[0]);
-      
-      TIMERSTART(CLAHE2D)
-      for (size_t i = 0; i < gpuFrames.size(); ++i) {
-        clahe->apply(gpuFrames[i], gpuFrames[i]);
-      }
-      TIMERSTOP(CLAHE2D)
+  auto clahe = cv::createCLAHE(clipLimit, cv::Size(numTiles, numTiles));
+  clahe->apply(frame, out);
+  cv::imwrite("./CLAHE.png", out);
 
-      for (size_t i = 0; i < frames.size(); ++i) {
-        gpuFrames[i].download(out[i]);
-      }
-    } else {
-      auto clahe = cv::createCLAHE(clipLimit, cv::Size(numTiles, numTiles));
-      TIMERSTART(CLAHE2D);
-      for (size_t i = 0; i < frames.size(); ++i) {
-	clahe->apply(frames[i], out[i]);
-      }
-      TIMERSTOP(CLAHE2D);
-    }
-    clahe2DOut = std::move(out);
-  }*/
+  return 0;
 
-  /*
-  if (useClahe3D) {
-    std::vector<cv::Mat> out;
-    auto clahe = cv::cuda::createCLAHE3D(clipLimit, cv::cuda::Size3i(numTiles, numTiles, numTiles));
-    uint8_t *dev_ptr = nullptr;
-    uint8_t *dev_out = nullptr;
-    size_t fsize = frames[0].rows * frames[0].cols;
-    cudaMalloc(&dev_ptr, frames.size() * fsize);
-    cudaMalloc(&dev_out, frames.size() * fsize);
-    for (size_t i = 0; i < frames.size(); ++i) {
-      cudaMemcpy(dev_ptr + i * fsize, frames[0].data, fsize, H2D); 
-    }
-    TIMERSTART(CLAHE3D);
-    clahe->apply(cv::cuda::DevPtr<uchar>(dev_ptr), cv::cuda::DevPtr<uchar>(dev_out), frames[0].rows, frames[0].cols, (int) frames.size(), cv::cuda::Stream::Null());
-    TIMERSTOP(CLAHE3D)
-    cudaFree(dev_ptr);
-    cudaFree(dev_out);
-    clahe3DOut = std::move(out);
-  }
-  */
-  /*
-  cv::namedWindow(OUTPUT_WINDOW_NAME, cv::WINDOW_KEEPRATIO);
-
-  for (size_t i = 0; i < frames.size(); ++i) {
-    std::vector<cv::Mat> m = { frames[i],
-                               equalizeHistOut.empty() ? frames[i] : equalizeHistOut[i],
-                               clahe2DOut.empty() ? frames[i] : clahe2DOut[i],
-                               clahe3DOut.empty() ? frames[i] : clahe3DOut[i] };
-
-    for (int i = 0; i < m.size(); ++i) {
+  if (equalizeHist && !gpu) {
+    for (int i = 0; i < 5; ++i) {
       cv::Mat tmp;
-      double factor = double(OUTPUT_IMAGE_HEIGHT) / double(m[i].rows);
-      cv::resize(m[i], tmp, cv::Size(), factor, factor);
-      m[i] = tmp;
+      int s = 1 << (10 + i);
+      cv::resize(frame, tmp, cv::Size(s, s));
+      std::cout << s << "x" << s << std::endl;
+      for (int j = 0; j < 5; ++j) {
+        TIMERSTART(HE);
+        cv::equalizeHist(tmp, tmp);
+        TIMERSTOP(HE);
+      }
     }
+  }
 
-    drawGrid(m[2], cv::Size(numTiles, numTiles));
-    drawGrid(m[3], cv::Size(numTiles, numTiles));
-
-    cv::Mat output = concat(m[0], m[1], m[2], m[3]);
-
-    cv::imshow(OUTPUT_WINDOW_NAME, output);
-    if ((cv::waitKey(0) & 0xff) == 27) {
-      break;
+  if (equalizeHist && gpu) {
+    for (int i = 0; i < 5; ++i) {
+      cv::Mat tmp;
+      cv::cuda::GpuMat tmpGpu;
+      int s = 1 << (10 + i);
+      cv::resize(frame, tmp, cv::Size(s, s));
+      std::cout << s << "x" << s << std::endl;
+      tmpGpu.upload(tmp);
+      for (int j = 0; j < 5; ++j) {
+        TIMERSTART(HEgpu);
+	cv::cuda::equalizeHist(tmpGpu, tmpGpu);
+	TIMERSTOP(HEgpu);
+      }
     }
-  }*/
+  }
+
+  if (useClahe && !gpu) {
+    for (int i = 0; i < 5; ++i) {
+      cv::Mat tmp;
+      auto clahe = cv::createCLAHE(clipLimit, cv::Size(numTiles, numTiles));
+      int s = 1 << (10 + i);
+      cv::resize(frame, tmp, cv::Size(s, s));
+      std::cout << s << "x" << s << std::endl;
+      for (int j = 0; j < 5; ++j) {
+        TIMERSTART(CLAHE2Dcpu);
+	clahe->apply(tmp, tmp);
+	TIMERSTOP(CLAHE2Dcpu);
+      }
+    }
+  }
+
+  if (useClahe && gpu) {
+    for (int i = 0; i < 5; ++i) {
+      cv::Mat tmp;
+      cv::cuda::GpuMat tmpGpu;
+      auto clahe = cv::cuda::createCLAHE(clipLimit, cv::Size(numTiles, numTiles));
+      int s = (1 << (10 + i)) + 3;
+      cv::resize(frame, tmp, cv::Size(s, s));
+      std::cout << s << "x" << s << std::endl;
+      tmpGpu.upload(tmp);
+      for (int j = 0; j < 5; ++j) {
+        TIMERSTART(CLAHE2Dgpu);
+	clahe->apply(tmpGpu, tmpGpu);
+	TIMERSTOP(CLAHE2Dgpu);
+      }
+    }
+  }
 
   return EXIT_SUCCESS;
 }

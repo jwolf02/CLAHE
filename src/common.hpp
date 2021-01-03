@@ -84,7 +84,7 @@ namespace string {
      * @return arithmetic type
      */
     template<typename T>
-    constexpr T to(const std::string &str) {
+    T to(const std::string &str) {
         static_assert(std::is_fundamental<T>::value && (std::is_arithmetic<T>::value || std::is_same<T, bool>::value),
                       "cannot convert std::string to non-arithmetic type");
 
